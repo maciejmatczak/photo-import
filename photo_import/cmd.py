@@ -52,20 +52,33 @@ def scan_source_dir(path: Path):
     oldest: t.Optional[datetime.datetime] = None
     newest: t.Optional[datetime.datetime] = None
 
-    for current_path, directories, files in path.walk():
-        for file_name in files:
-            file = current_path / file_name
-            found_extensions[file.suffix.lower().lstrip(".")] += 1
-            mtime = datetime.datetime.fromtimestamp(file.lstat().st_mtime)
-            if oldest is None:
-                oldest = mtime
-            if newest is None:
-                newest = mtime
+    cmd = [
+        shutil.which("rclone"),
+        "--ignore-case",
+        "--files-only",
+        "--recursive",
+        "--format",
+        "tp",
+        "lsf",
+        str(path),
+    ]
 
-            if mtime < oldest:
-                oldest = mtime
-            if mtime > newest:
-                newest = mtime
+    proc = sp.run(cmd, text=True, capture_output=True)
+    for line in proc.stdout.splitlines():
+        timestamp_str, file_path_str = line.split(";")
+        file_path = Path(file_path_str)
+        found_extensions[file_path.suffix.lower().lstrip(".")] += 1
+        mtime = datetime.datetime.fromisoformat(timestamp_str)
+
+        if oldest is None:
+            oldest = mtime
+        if newest is None:
+            newest = mtime
+
+        if mtime < oldest:
+            oldest = mtime
+        if mtime > newest:
+            newest = mtime
 
     return ScanResult(found_extensions=found_extensions, oldest=oldest, newest=newest)
 
@@ -108,7 +121,6 @@ def cmd(scenario: str, from_, to, dry_run: bool):
 
     cmd = [
         shutil.which("rclone"),
-        "--log-level=DEBUG",
         "--ignore-case",
         "copy",
         # "--progress",
@@ -134,4 +146,5 @@ def cmd(scenario: str, from_, to, dry_run: bool):
     click.echo(shlex.join(cmd))
     click.echo("")
     click.confirm("Ok? Continue?", abort=True)
+
     sp.run(cmd)
