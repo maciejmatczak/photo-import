@@ -123,8 +123,7 @@ def cmd(scenario: str, from_, to, dry_run: bool):
         shutil.which("rclone"),
         "--ignore-case",
         "copy",
-        # "--progress",
-        # "-vvv",
+        "-vv",
     ]
     if dry_run:
         cmd.append("--dry-run")
