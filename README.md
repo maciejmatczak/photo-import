@@ -2,36 +2,27 @@
 
 Small helper for photo import job.
 
-## Design spec
-
-- user configuration
-- tool data
-- supports multiple devices
-- cli utility
-- import flow
-  - start
-  - choose device
-  - read all the files since last import (timestamp? exif?)
-  - copy files (python copy? rclone?)
-  - save timestamp of last copied foto
-
-### Config
+## Example user config
 
 ```yaml
-target_root: /path/to/target/dump
-file_formats:
+target_root: E:\workspace\photo-import\build\dump
+include:
   - jpg
+  - png
   - orf
   - mp4
+  - rw2
+exclude: []
 scenarios:
-  Aparat:
-    source: /source/path
+  fz300:
+    source: D:\_zrzut-zdjec\FZ300
 ```
 
-### Data
+## TODO
 
-```yaml
-Aparat:
-  last_photo_timestamp: xyz
-```
-
+- add appdir based config
+  - app config should point to scenario config
+  - scenario config should exist somewhere else - easier to backup, etc.
+- add data handling: app data?
+- flow:
+  - after import data, save the current "boundaries" of last used import, so they would be reused automatically next time
