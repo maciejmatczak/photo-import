@@ -22,6 +22,5 @@ scenarios:
 
 - import session handling
   - on each import, bound dates for each scenario should be saved
-- disk/partition selector
 - flow:
   - after import data, save the current "boundaries" of last used import, so they would be reused automatically next time

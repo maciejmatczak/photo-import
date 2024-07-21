@@ -2,3 +2,5 @@ Click
 pydantic
 PyYAML
 rich
+psutil
+questionary

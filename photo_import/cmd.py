@@ -52,17 +52,8 @@ def load_config(path: Path, config_class: t.Type[T]) -> T:
 @dataclass
 class ScanResult:
     found_extensions: t.Dict[str, int]
-    oldest: datetime.datetime
-    newest: datetime.datetime
-
-    def __str__(self) -> str:
-        msg = "Found extensions:\n"
-        for ext, count in self.found_extensions.items():
-            msg += f"  {ext}: {count}\n"
-        msg += f"oldest: {self.oldest.isoformat()}\n"
-        msg += f"newest: {self.newest.isoformat()}"
-
-        return msg
+    oldest: datetime.datetime | None
+    newest: datetime.datetime | None
 
 
 def scan_source_dir(path: Path, from_: datetime.datetime, to: datetime.datetime):
@@ -112,7 +103,9 @@ def scan_source_dir(path: Path, from_: datetime.datetime, to: datetime.datetime)
 @dataclass
 class App:
     app_config: AppConfig
+    app_config_path: Path
     user_config: UserConfig
+    user_config_path: Path
 
 
 @click.group(invoke_without_command=True)
@@ -120,6 +113,7 @@ class App:
 def cmd(ctx):
     print("[blue]Setting up")
     print("")
+
     app_dir = Path(click.get_app_dir(APP_NAME))
     app_dir.mkdir(exist_ok=True)
 
@@ -146,9 +140,20 @@ def cmd(ctx):
 
     pprint(user_config.model_dump(mode="json"), expand_all=True)
 
-    ctx.obj = App(user_config=user_config, app_config=app_config)
+    ctx.obj = App(
+        user_config=user_config,
+        user_config_path=app_config.user_config,
+        app_config=app_config,
+        app_config_path=app_config_path,
+    )
+
     if ctx.invoked_subcommand is not None:
         print("")
+
+
+import psutil
+import questionary
+from psutil._common import bytes2human
 
 
 @cmd.command(name="import")
@@ -178,18 +183,39 @@ def import_(
 
     target = app.user_config.target_root / scenario
 
+    options = {}
+    for partition in psutil.disk_partitions():
+        usage = psutil.disk_usage(partition.mountpoint)
+        partition_str = f"{partition.device}: {bytes2human(usage.used)} / {bytes2human(usage.total)}"
+        options[partition_str] = partition.mountpoint
+
+    choice = questionary.select(
+        "Which storage device to import photos from?", choices=options
+    ).ask()
+
+    scenario_source = Path(options[choice]) / scenario_data.source
+
+    if not scenario_source.exists():
+        print(f"[red]Scenario import path doesn't exist: {scenario_source}")
+        print(f"Review your config: [green]{app.user_config_path}")
+        sys.exit(1)
+
+    print("")
     print(f"scenario: [magenta]{scenario}")
-    print(f"source: [magenta]{scenario_data.source}")
+    print(f"source: [magenta]{scenario_source}")
     print(f"target: [magenta]{target}")
     print("")
 
-    scan_result = scan_source_dir(scenario_data.source, from_, to)
+    print("Scanning dir...\n")
+    scan_result = scan_source_dir(scenario_source, from_, to)
 
     print("Found extensions:")
     for ext, count in scan_result.found_extensions.items():
         print(f"  {ext}: [magenta]{count}")
-    print(f"oldest: [magenta]{scan_result.oldest.isoformat(sep=' ')}")
-    print(f"newest: [magenta]{scan_result.newest.isoformat(sep=' ')}")
+    o = scan_result.oldest.isoformat(sep=" ") if scan_result.oldest else "?"
+    n = scan_result.newest.isoformat(sep=" ") if scan_result.newest else "?"
+    print(f"oldest: [magenta]{o}")
+    print(f"newest: [magenta]{n}")
 
     print("")
 
@@ -227,7 +253,7 @@ def import_(
         cmd += ["--include", f"*.{include_format}"]
 
     cmd += [
-        str(scenario_data.source),
+        str(scenario_source),
         str(target),
     ]
     print("Command:")
