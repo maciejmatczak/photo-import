@@ -121,11 +121,11 @@ def cmd(ctx):
     app_dir = Path(click.get_app_dir(APP_NAME))
     app_dir.mkdir(exist_ok=True)
 
-    print(f"[magenta]App directory: [/] {app_dir}")
+    print(f"[magenta]App directory:[/] {app_dir}")
 
     app_config_path = app_dir / "config.yml"
 
-    print(f"[magenta]App config path: [/] {app_config_path}")
+    print(f"[magenta]App config path:[/] {app_config_path}")
 
     if not app_config_path.exists():
         print("[red]App config doesn't exist!")
@@ -217,7 +217,7 @@ def import_(
     print("Scanning dir...\n")
     scan_result = scan_source_dir(scenario_source, from_, to)
 
-    print("Found extensions:")
+    print("Found files:")
     for ext, count in scan_result.found_extensions.items():
         print(f"  {ext}: [magenta]{count}")
     o = scan_result.oldest.isoformat(sep=" ") if scan_result.oldest else "?"
@@ -227,14 +227,17 @@ def import_(
 
     print("")
 
-    unexpected_formats = set(scan_result.found_extensions.keys()) - set(
+    # we expect the extensions we want to initially include, but scan dir might find more
+    unexpected_extensions = set(scan_result.found_extensions.keys()) - set(
         app.user_config.include
     )
 
-    unexpected_formats -= set(app.user_config.exclude)
-    if unexpected_formats:
+    # in case of often cases, user can silence the warnings for certain extensions
+    unexpected_extensions -= set(app.user_config.exclude)
+
+    if unexpected_extensions:
         print("[yellow]Found unexpected file extensions! These files will be skipped.")
-        print(unexpected_formats)
+        print(unexpected_extensions)
 
     click.confirm("Ok? Continue?", abort=True)
 
@@ -246,7 +249,7 @@ def import_(
         shutil.which("rclone"),
         "--ignore-case",
         "copy",
-        "-vv",
+        "-v",
     ]
     if dry_run:
         cmd.append("--dry-run")
@@ -255,10 +258,10 @@ def import_(
     if to:
         cmd += ["--min-age", to.isoformat()]
 
-    include_formats = set(app.user_config.include)
+    include_extensions = set(app.user_config.include)
 
-    for include_format in include_formats:
-        cmd += ["--include", f"*.{include_format}"]
+    for include_extension in include_extensions:
+        cmd += ["--include", f"*.{include_extension}"]
 
     cmd += [
         str(scenario_source),
