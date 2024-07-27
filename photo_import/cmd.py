@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import click
+import psutil
+import questionary
+from psutil._common import bytes2human
 from pydantic import BaseModel, ValidationError, field_validator
 from rich import print
 from rich.pretty import pprint
@@ -102,6 +105,7 @@ def scan_source_dir(path: Path, from_: datetime.datetime, to: datetime.datetime)
 
 @dataclass
 class App:
+    app_dir: Path
     app_config: AppConfig
     app_config_path: Path
     user_config: UserConfig
@@ -117,10 +121,14 @@ def cmd(ctx):
     app_dir = Path(click.get_app_dir(APP_NAME))
     app_dir.mkdir(exist_ok=True)
 
+    print(f"[magenta]App directory: [/] {app_dir}")
+
     app_config_path = app_dir / "config.yml"
 
+    print(f"[magenta]App config path: [/] {app_config_path}")
+
     if not app_config_path.exists():
-        print(f"[red]{app_config_path} doesn't exist!")
+        print("[red]App config doesn't exist!")
         sys.exit(1)
 
     try:
@@ -129,6 +137,8 @@ def cmd(ctx):
         print(str(exception))
         sys.exit(1)
 
+    print("")
+    print("[magenta]App config:")
     pprint(app_config.model_dump(mode="json"), expand_all=True)
 
     try:
@@ -138,9 +148,12 @@ def cmd(ctx):
         print(str(exception))
         sys.exit(1)
 
+    print("")
+    print(f"[magenta]User config: [/] {app_config_path}")
     pprint(user_config.model_dump(mode="json"), expand_all=True)
 
     ctx.obj = App(
+        app_dir=app_dir,
         user_config=user_config,
         user_config_path=app_config.user_config,
         app_config=app_config,
@@ -149,11 +162,6 @@ def cmd(ctx):
 
     if ctx.invoked_subcommand is not None:
         print("")
-
-
-import psutil
-import questionary
-from psutil._common import bytes2human
 
 
 @cmd.command(name="import")
