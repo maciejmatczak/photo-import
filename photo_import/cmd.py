@@ -1,5 +1,5 @@
 import datetime
-import shlex
+import random
 import shutil
 import subprocess as sp
 import sys
@@ -8,10 +8,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-import click
-from pydantic import BaseModel, ValidationError, field_validator
-from rich import print
-from rich.pretty import pprint
+from pydantic import BaseModel, field_validator
+from PySide6 import QtCore, QtGui, QtWidgets
 from yaml import safe_load
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -100,166 +98,266 @@ def scan_source_dir(path: Path, from_: datetime.datetime, to: datetime.datetime)
     return ScanResult(found_extensions=found_extensions, oldest=oldest, newest=newest)
 
 
-@dataclass
-class App:
-    app_config: AppConfig
-    app_config_path: Path
+class AlertDialog(QtWidgets.QMessageBox):
+    def __init__(self, message, details, window_size=None, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Alert")
+        self.setText(message)
+        self.setDetailedText(details)
+        self.setStandardButtons(QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel)
+        self.setIcon(QtWidgets.QMessageBox.Warning)
+
+        if window_size:
+            self.setGeometry(window_size)
+
+
+class App(QtWidgets.QApplication):
+    def __init__(self, argv: list[str]) -> None:
+        self.setOrganizationName("MMco")
+        self.setApplicationName("Photo Import")
+
+        QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
+
+        super().__init__(argv)
+
+    # @QtCore.Slot(str, str)
+    # def alert(self, message, details):
+    #     AlertDialog(message=message, details=details).show()
+
     user_config: UserConfig
     user_config_path: Path
 
 
-@click.group(invoke_without_command=True)
-@click.pass_context
-def cmd(ctx):
-    print("[blue]Setting up")
-    print("")
+class Settings(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
 
-    app_dir = Path(click.get_app_dir(APP_NAME))
-    app_dir.mkdir(exist_ok=True)
+        settings = QtCore.QSettings()
 
-    app_config_path = app_dir / "config.yml"
+        layout = QtWidgets.QVBoxLayout()
+        self.setLayout(layout)
 
-    if not app_config_path.exists():
-        print(f"[red]{app_config_path} doesn't exist!")
-        sys.exit(1)
+        form = QtWidgets.QWidget()
+        form_layout = QtWidgets.QFormLayout(form)
 
-    try:
-        app_config = load_config(app_config_path, AppConfig)
-    except ValidationError as exception:
-        print(str(exception))
-        sys.exit(1)
-
-    pprint(app_config.model_dump(mode="json"), expand_all=True)
-
-    try:
-        user_config = load_config(app_config.user_config, UserConfig)
-    except ValidationError as exception:
-        print(f"[red]Invalid user config: {app_config.user_config}")
-        print(str(exception))
-        sys.exit(1)
-
-    pprint(user_config.model_dump(mode="json"), expand_all=True)
-
-    ctx.obj = App(
-        user_config=user_config,
-        user_config_path=app_config.user_config,
-        app_config=app_config,
-        app_config_path=app_config_path,
-    )
-
-    if ctx.invoked_subcommand is not None:
-        print("")
-
-
-import psutil
-import questionary
-from psutil._common import bytes2human
-
-
-@cmd.command(name="import")
-@click.option("-s", "--scenario", required=False)
-@click.option("-f", "--from", "from_", type=click.DateTime())
-@click.option("-t", "--to", type=click.DateTime())
-@click.option("-n", "--dry-run", is_flag=True, default=False)
-@click.argument("scenario")
-@click.pass_obj
-def import_(
-    app: App,
-    scenario: str,
-    from_: datetime.datetime,
-    to: datetime.datetime,
-    dry_run: bool,
-):
-    print("[blue]Reading data")
-    print("")
-
-    try:
-        scenario_data = app.user_config.scenarios[scenario]
-    except KeyError:
-        print(
-            f"[red]Unknown scenario. Known scenarios:\n{', '.join(app.user_config.scenarios.keys())}"
+        self.user_config = QtWidgets.QLineEdit(
+            settings.value("user_config_path", defaultValue="?", type=str)
         )
-        sys.exit(1)
+        form_layout.addRow("User config", self.user_config)
 
-    target = app.user_config.target_root / scenario
+        layout.addWidget(form)
 
-    options = {}
-    for partition in psutil.disk_partitions():
-        usage = psutil.disk_usage(partition.mountpoint)
-        partition_str = f"{partition.device}: {bytes2human(usage.used)} / {bytes2human(usage.total)}"
-        options[partition_str] = partition.mountpoint
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
 
-    choice = questionary.select(
-        "Which storage device to import photos from?", choices=options
-    ).ask()
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
 
-    scenario_source = Path(options[choice]) / scenario_data.source
+    def accept(self):
+        settings = QtCore.QSettings()
+        settings.setValue("user_config_path", self.user_config)
+        super().accept()
 
-    if not scenario_source.exists():
-        print(f"[red]Scenario import path doesn't exist: {scenario_source}")
-        print(f"Review your config: [green]{app.user_config_path}")
-        sys.exit(1)
 
-    print("")
-    print(f"scenario: [magenta]{scenario}")
-    print(f"source: [magenta]{scenario_source}")
-    print(f"target: [magenta]{target}")
-    print("")
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self):
+        super().__init__()
 
-    print("Scanning dir...\n")
-    scan_result = scan_source_dir(scenario_source, from_, to)
+        self.hello = ["Hallo Welt", "Hei maailma", "Hola Mundo", "Привет мир"]
 
-    print("Found extensions:")
-    for ext, count in scan_result.found_extensions.items():
-        print(f"  {ext}: [magenta]{count}")
-    o = scan_result.oldest.isoformat(sep=" ") if scan_result.oldest else "?"
-    n = scan_result.newest.isoformat(sep=" ") if scan_result.newest else "?"
-    print(f"oldest: [magenta]{o}")
-    print(f"newest: [magenta]{n}")
+        self.button = QtWidgets.QPushButton("Click me!")
+        self.text = QtWidgets.QLabel("Hello World", alignment=QtCore.Qt.AlignCenter)
 
-    print("")
+        central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QtWidgets.QVBoxLayout(central_widget)
+        layout.addWidget(self.text)
+        layout.addWidget(self.button)
 
-    unexpected_formats = set(scan_result.found_extensions.keys()) - set(
-        app.user_config.include
-    )
+        self.button.clicked.connect(self.magic)
 
-    unexpected_formats -= set(app.user_config.exclude)
-    if unexpected_formats:
-        print("[yellow]Found unexpected file extensions! These files will be skipped.")
-        print(unexpected_formats)
+        toolbar = QtWidgets.QToolBar("Main toolbar")
+        self.addToolBar(toolbar)
 
-    click.confirm("Ok? Continue?", abort=True)
+        open_settings_action = QtGui.QAction("Settings", self)
+        open_settings_action.triggered.connect(self.open_settings)
+        toolbar.addAction(open_settings_action)
 
-    print("")
-    print("[blue]Importing data")
-    print("")
+    @QtCore.Slot()
+    def magic(self):
+        self.text.setText(random.choice(self.hello))
 
-    cmd = [
-        shutil.which("rclone"),
-        "--ignore-case",
-        "copy",
-        "-vv",
-    ]
-    if dry_run:
-        cmd.append("--dry-run")
-    if from_:
-        cmd += ["--max-age", from_.isoformat()]
-    if to:
-        cmd += ["--min-age", to.isoformat()]
+    def open_settings(self, s):
+        dialog = Settings(self)
+        print(dialog.exec())
 
-    include_formats = set(app.user_config.include)
 
-    for include_format in include_formats:
-        cmd += ["--include", f"*.{include_format}"]
+def run():
+    app = App(sys.argv)
 
-    cmd += [
-        str(scenario_source),
-        str(target),
-    ]
-    print("Command:")
-    print(" ", shlex.join(cmd))
-    print("")
+    widget = MainWindow()
+    widget.resize(800, 600)
+    widget.show()
 
-    click.confirm("Ok? Continue?", abort=True)
+    sys.exit(app.exec())
 
-    sp.run(cmd)
+
+# @click.command(invoke_without_command=True)
+# @click.pass_context
+# def cmd(ctx):
+# print("[blue]Setting up")
+# print("")
+
+# app_dir = Path(click.get_app_dir(APP_NAME))
+# app_dir.mkdir(exist_ok=True)
+
+# app_config_path = app_dir / "config.yml"
+
+# if not app_config_path.exists():
+#     print(f"[red]{app_config_path} doesn't exist!")
+#     sys.exit(1)
+
+# try:
+#     app_config = load_config(app_config_path, AppConfig)
+# except ValidationError as exception:
+#     print(str(exception))
+#     sys.exit(1)
+
+# pprint(app_config.model_dump(mode="json"), expand_all=True)
+
+# try:
+#     user_config = load_config(app_config.user_config, UserConfig)
+# except ValidationError as exception:
+#     print(f"[red]Invalid user config: {app_config.user_config}")
+#     print(str(exception))
+#     sys.exit(1)
+
+# pprint(user_config.model_dump(mode="json"), expand_all=True)
+
+# ctx.obj = App(
+#     user_config=user_config,
+#     user_config_path=app_config.user_config,
+#     app_config=app_config,
+#     app_config_path=app_config_path,
+# )
+
+# if ctx.invoked_subcommand is not None:
+#     print("")
+
+
+# @cmd.command(name="import")
+# @click.option("-s", "--scenario", required=False)
+# @click.option("-f", "--from", "from_", type=click.DateTime())
+# @click.option("-t", "--to", type=click.DateTime())
+# @click.option("-n", "--dry-run", is_flag=True, default=False)
+# @click.argument("scenario")
+# @click.pass_obj
+# def import_(
+#     app: App,
+#     scenario: str,
+#     from_: datetime.datetime,
+#     to: datetime.datetime,
+#     dry_run: bool,
+# ):
+#     print("[blue]Reading data")
+#     print("")
+
+#     try:
+#         scenario_data = app.user_config.scenarios[scenario]
+#     except KeyError:
+#         print(
+#             f"[red]Unknown scenario. Known scenarios:\n{', '.join(app.user_config.scenarios.keys())}"
+#         )
+#         sys.exit(1)
+
+#     target = app.user_config.target_root / scenario
+
+#     options = {}
+#     for partition in psutil.disk_partitions():
+#         usage = psutil.disk_usage(partition.mountpoint)
+#         partition_str = f"{partition.device}: {bytes2human(usage.used)} / {bytes2human(usage.total)}"
+#         options[partition_str] = partition.mountpoint
+
+#     choice = questionary.select(
+#         "Which storage device to import photos from?", choices=options
+#     ).ask()
+
+#     scenario_source = Path(options[choice]) / scenario_data.source
+
+#     if not scenario_source.exists():
+#         print(f"[red]Scenario import path doesn't exist: {scenario_source}")
+#         print(f"Review your config: [green]{app.user_config_path}")
+#         sys.exit(1)
+
+#     print("")
+#     print(f"scenario: [magenta]{scenario}")
+#     print(f"source: [magenta]{scenario_source}")
+#     print(f"target: [magenta]{target}")
+#     print("")
+
+#     print("Scanning dir...\n")
+#     scan_result = scan_source_dir(scenario_source, from_, to)
+
+#     print("Found extensions:")
+#     for ext, count in scan_result.found_extensions.items():
+#         print(f"  {ext}: [magenta]{count}")
+#     o = scan_result.oldest.isoformat(sep=" ") if scan_result.oldest else "?"
+#     n = scan_result.newest.isoformat(sep=" ") if scan_result.newest else "?"
+#     print(f"oldest: [magenta]{o}")
+#     print(f"newest: [magenta]{n}")
+
+#     print("")
+
+#     unexpected_formats = set(scan_result.found_extensions.keys()) - set(
+#         app.user_config.include
+#     )
+
+#     unexpected_formats -= set(app.user_config.exclude)
+#     if unexpected_formats:
+#         print("[yellow]Found unexpected file extensions! These files will be skipped.")
+#         print(unexpected_formats)
+
+#     click.confirm("Ok? Continue?", abort=True)
+
+#     print("")
+#     print("[blue]Importing data")
+#     print("")
+
+#     cmd = [
+#         shutil.which("rclone"),
+#         "--ignore-case",
+#         "copy",
+#         "-vv",
+#     ]
+#     if dry_run:
+#         cmd.append("--dry-run")
+#     if from_:
+#         cmd += ["--max-age", from_.isoformat()]
+#     if to:
+#         cmd += ["--min-age", to.isoformat()]
+
+#     include_formats = set(app.user_config.include)
+
+#     for include_format in include_formats:
+#         cmd += ["--include", f"*.{include_format}"]
+
+#     cmd += [
+#         str(scenario_source),
+#         str(target),
+#     ]
+#     print("Command:")
+#     print(" ", shlex.join(cmd))
+#     print("")
+
+#     click.confirm("Ok? Continue?", abort=True)
+
+#     sp.run(cmd)
+#     click.confirm("Ok? Continue?", abort=True)
+
+#     sp.run(cmd)
+#     sp.run(cmd)
+#     sp.run(cmd)
+#     sp.run(cmd)
